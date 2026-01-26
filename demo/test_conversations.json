@@ -1,0 +1,8 @@
+{
+  "demo_1_upi_fraud": {
+    "sessionId": "demo-upi-001",
+    "scam_type": "UPI_FRAUD",
+    "description": "Complete 6-stage UPI fraud demonstration",
+    "messages": []
+  }
+}
