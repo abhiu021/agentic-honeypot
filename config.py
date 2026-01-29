@@ -1,13 +1,9 @@
+from pydantic import Field, ConfigDict
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
 from dotenv import load_dotenv
-
-# Load environment variables from .env file (project root or utils/.env)
-_project_root = os.path.dirname(os.path.abspath(__file__))
-load_dotenv()  # cwd first
-load_dotenv(os.path.join(_project_root, ".env"))  # project root
-load_dotenv(os.path.join(_project_root, "utils", ".env"))  # utils/.env
+load_dotenv()
 
 
 class LLMConfig:
@@ -63,30 +59,35 @@ class APIConfig:
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(extra="ignore", env_file=".env", case_sensitive=True)
+
     # API Configuration
     API_KEY: str = "sk_test_honeypot_2026"
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
-    
+
     # LLM Provider Configuration
     ANTHROPIC_API_KEY: Optional[str] = None
     LLM_PROVIDER: str = "gemini"  # "gemini" or "mock"
     LLM_MODEL: str = "gemini-1.5-flash"
-    
+    GROQ_API_KEY: str = Field(default="", description="Groq API key")
+    GROQ_MODEL: str = Field(default="llama-3.1-8b-instant", description="Groq model")
+    LLM_TIMEOUT: int = Field(default=5, description="LLM request timeout (seconds)")
+    LLM_MAX_RETRIES: int = Field(default=3, description="LLM max retries")
+    LLM_TEMPERATURE: float = Field(default=0.1, description="LLM temperature")
+    LLM_MAX_TOKENS: int = Field(default=200, description="LLM max tokens")
+
     # Session Configuration
     SESSION_TIMEOUT_MINUTES: int = 30
     MAX_CONVERSATION_TURNS: int = 20
-    
+
     # GUVI Integration
     GUVI_CALLBACK_URL: str = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
     GUVI_CALLBACK_ENABLED: bool = True
-    
+
     # Detection Thresholds
     SCAM_DETECTION_THRESHOLD: float = 0.45
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    HIGH_CONFIDENCE_THRESHOLD: float = Field(default=0.60, description="High confidence threshold")
 
 settings = Settings()
 

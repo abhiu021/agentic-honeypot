@@ -73,39 +73,39 @@ def main():
             "expected": "HIGH confidence, skip LLM (obvious scam)"
         },
         
-        # Case 2: Low confidence - should call LLM (subtle scam)
+        # Case 2: UPI Fraud
         {
-            "message": "Hi, there's an important update regarding your payment. Please verify your details.",
+            "message": "Your UPI payment of Rs 5000 failed. Click here to verify: [short.link/verify] Reply YES to continue",
             "channel": "SMS",
-            "expected": "MEDIUM confidence, LLM enhanced (borderline)"
+            "expected": "UPI fraud / phishing link"
         },
         
-        # Case 3: Low confidence - should call LLM (legitimate)
+        # Case 3: Fake Customer Support
         {
-            "message": "Your Amazon order #12345 has been delivered. Thank you for shopping with us!",
-            "channel": "Email",
-            "expected": "LOW confidence, legitimate message"
-        },
-        
-        # Case 4: Low confidence - novel scam pattern
-        {
-            "message": "Congratulations! You've been selected for an exclusive investment opportunity with guaranteed 50% returns. Limited seats available.",
+            "message": "Amazon Customer Support: Your order #AMZ123 has payment issue. Call 1800-XXX-XXXX immediately or cancel order.",
             "channel": "WhatsApp",
-            "expected": "LLM catches investment scam"
+            "expected": "Fake customer support / impersonation"
         },
         
-        # Case 5: Borderline case
+        # Case 4: Phishing Link
         {
-            "message": "Important security update for your account. Please verify your identity at the earliest.",
+            "message": "RBI Alert: Suspicious transaction detected. Verify account: bit.ly/rbi-verify-now",
             "channel": "SMS",
-            "expected": "LLM decides if legitimate or scam"
+            "expected": "Phishing / fake RBI alert"
         },
         
-        # Case 6: High confidence legitimate
+        # Case 5: Investment Scam
         {
-            "message": "Hi, how are you doing today? Want to meet for coffee?",
+            "message": "Earn ₹50,000/month working 2hrs/day! Join Groww Investment Club now: [link] Limited spots!",
             "channel": "WhatsApp",
-            "expected": "LOW confidence, clearly not scam"
+            "expected": "Investment / get-rich-quick scam"
+        },
+        
+        # Case 6: Fake Offer
+        {
+            "message": "CONGRATS! You won iPhone 15 from Flipkart Lucky Draw. Claim now: [claim.freegift.in] Hurry!",
+            "channel": "SMS",
+            "expected": "Fake prize / lottery scam"
         }
     ]
     
