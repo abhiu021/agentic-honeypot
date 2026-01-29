@@ -3,8 +3,11 @@ from typing import Optional
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file (project root or utils/.env)
+_project_root = os.path.dirname(os.path.abspath(__file__))
+load_dotenv()  # cwd first
+load_dotenv(os.path.join(_project_root, ".env"))  # project root
+load_dotenv(os.path.join(_project_root, "utils", ".env"))  # utils/.env
 
 
 class LLMConfig:
@@ -18,22 +21,21 @@ class LLMConfig:
         self.max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "150"))
         
         # Provider-specific settings
-        self.openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-        self.openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
-        
         self.gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
-        self.gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        self.gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        self.groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
+        self.groq_model: str = os.getenv("GROQ_MODEL", "llama3-8b-8192")
     
     def get_api_key(self) -> str:
         """Get API key for configured provider."""
-        if self.provider == "openai":
-            if not self.openai_api_key:
-                raise ValueError("OPENAI_API_KEY not set in environment")
-            return self.openai_api_key
-        elif self.provider == "gemini":
+        if self.provider == "gemini":
             if not self.gemini_api_key:
                 raise ValueError("GEMINI_API_KEY not set in environment")
             return self.gemini_api_key
+        elif self.provider == "groq":
+            if not self.groq_api_key:
+                raise ValueError("GROQ_API_KEY not set in environment")
+            return self.groq_api_key
         elif self.provider == "mock":
             return "mock-key-not-needed"
         else:
@@ -41,10 +43,10 @@ class LLMConfig:
     
     def get_model(self) -> str:
         """Get model name for configured provider."""
-        if self.provider == "openai":
-            return self.openai_model
-        elif self.provider == "gemini":
+        if self.provider == "gemini":
             return self.gemini_model
+        elif self.provider == "groq":
+            return self.groq_model
         else:
             return "mock-model"
 
@@ -67,10 +69,9 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     
     # LLM Provider Configuration
-    OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
-    LLM_PROVIDER: str = "openai"  # "openai" or "anthropic"
-    LLM_MODEL: str = "gpt-4"
+    LLM_PROVIDER: str = "gemini"  # "gemini" or "mock"
+    LLM_MODEL: str = "gemini-1.5-flash"
     
     # Session Configuration
     SESSION_TIMEOUT_MINUTES: int = 30

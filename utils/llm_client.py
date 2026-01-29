@@ -1,15 +1,16 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, List
-import openai
 import time
+import json
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
+import httpx
 
 
 class BaseLLMClient(ABC):
     """
     Abstract base class for all LLM client implementations.
-    Provides unified interface for OpenAI, Anthropic, and mock clients.
+    Provides unified interface for Gemini, Groq, and mock clients.
     """
     
     def __init__(self, api_key: str, timeout: int = 3):
@@ -94,140 +95,28 @@ class BaseLLMClient(ABC):
         }
 
 
-class OpenAILLMClient(BaseLLMClient):
-    """
-    OpenAI GPT-4/GPT-4-turbo client wrapper with retry logic and cost tracking.
-    Supports exponential backoff for rate limits and automatic error recovery.
-    """
-    
-    # Pricing per 1M tokens (as of January 2026)
-    PRICING = {
-        "gpt-4": {"input": 30.0, "output": 60.0},
-        "gpt-4-turbo": {"input": 10.0, "output": 30.0},
-        "gpt-4-turbo-preview": {"input": 10.0, "output": 30.0},
-        "gpt-3.5-turbo": {"input": 0.5, "output": 1.5}
-    }
-    
-    def __init__(
-        self, 
-        api_key: str, 
-        model: str = "gpt-4-turbo",
-        timeout: int = 3,
-        max_retries: int = 3
-    ):
-        """
-        Initialize OpenAI client.
-        
-        Args:
-            api_key: OpenAI API key
-            model: Model name (default: gpt-4-turbo)
-            timeout: Request timeout in seconds (default: 3)
-            max_retries: Maximum retry attempts for failed requests (default: 3)
-        """
-        super().__init__(api_key, timeout)
-        self.model = model
-        self.max_retries = max_retries
-        self.client = openai.OpenAI(api_key=api_key, timeout=timeout)
-    
-    def generate(
-        self,
-        prompt: str,
-        temperature: float = 0.7,
-        max_tokens: int = 150,
-        system_prompt: Optional[str] = None
-    ) -> str:
-        """
-        Generate completion from a single prompt.
-        Converts to chat format and calls chat_completion().
-        """
-        messages = []
-        
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        
-        messages.append({"role": "user", "content": prompt})
-        
-        return self.chat_completion(messages, temperature, max_tokens)
-    
-    def chat_completion(
-        self,
-        messages: List[Dict[str, str]],
-        temperature: float = 0.7,
-        max_tokens: int = 150
-    ) -> str:
-        """
-        Generate completion from chat messages with retry logic.
-        Implements exponential backoff for rate limits.
-        """
-        for attempt in range(self.max_retries):
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-                
-                # Track token usage and cost
-                usage = response.usage
-                self.total_tokens += usage.total_tokens
-                self.total_cost += self.calculate_cost(
-                    usage.prompt_tokens,
-                    usage.completion_tokens
-                )
-                
-                return response.choices[0].message.content
-                
-            except openai.RateLimitError as e:
-                if attempt < self.max_retries - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                    time.sleep(wait_time)
-                else:
-                    raise Exception(f"OpenAI rate limit exceeded after {self.max_retries} attempts: {e}")
-            
-            except openai.APITimeoutError as e:
-                if attempt < self.max_retries - 1:
-                    time.sleep(1)
-                else:
-                    raise Exception(f"OpenAI timeout after {self.max_retries} attempts: {e}")
-            
-            except Exception as e:
-                raise Exception(f"OpenAI API error: {e}")
-        
-        raise Exception("OpenAI chat completion failed after all retry attempts")
-    
-    def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """
-        Calculate API cost in USD based on token usage.
-        Uses model-specific pricing from PRICING constant.
-        """
-        pricing = self.PRICING.get(self.model, self.PRICING["gpt-4-turbo"])
-        
-        input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
-        output_cost = (completion_tokens / 1_000_000) * pricing["output"]
-        
-        return input_cost + output_cost
-
-
 class GeminiLLMClient(BaseLLMClient):
     """
     Google Gemini client wrapper with retry logic and cost tracking.
-    Supports Gemini 1.5 Pro and Gemini 1.5 Flash models.
+    Supports Gemini 2.x Flash/Pro models (e.g. gemini-2.0-flash, gemini-2.5-flash).
     """
     
-    # Pricing per 1M tokens (as of January 2026)
+    # Pricing per 1M tokens (approximate; gemini-2.0-flash as default)
     PRICING = {
-        "gemini-1.5-pro": {"input": 3.5, "output": 10.5},
-        "gemini-1.5-pro-latest": {"input": 3.5, "output": 10.5},
+        "gemini-2.0-flash": {"input": 0.15, "output": 0.60},
+        "gemini-2.0-flash-001": {"input": 0.15, "output": 0.60},
+        "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+        "gemini-2.5-flash-lite": {"input": 0.075, "output": 0.30},
+        "gemini-2.5-pro": {"input": 3.5, "output": 10.5},
         "gemini-1.5-flash": {"input": 0.35, "output": 1.05},
-        "gemini-1.5-flash-latest": {"input": 0.35, "output": 1.05},
-        "gemini-pro": {"input": 0.5, "output": 1.5}
+        "gemini-1.5-pro": {"input": 3.5, "output": 10.5},
+        "gemini-pro": {"input": 0.5, "output": 1.5},
     }
     
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-1.5-flash",
+        model: str = "gemini-2.0-flash",
         timeout: int = 3,
         max_retries: int = 3
     ):
@@ -236,7 +125,7 @@ class GeminiLLMClient(BaseLLMClient):
         
         Args:
             api_key: Google AI API key
-            model: Model name (default: gemini-1.5-flash)
+            model: Model name (default: gemini-2.0-flash; use a v1beta-supported model)
             timeout: Request timeout in seconds (default: 3)
             max_retries: Maximum retry attempts for failed requests (default: 3)
         """
@@ -246,7 +135,7 @@ class GeminiLLMClient(BaseLLMClient):
         
         # Configure Gemini API
         genai.configure(api_key=api_key)
-        self.client = genai.GenerativeModel(model)
+        self.client = genai.GenerativeModel(self.model)
     
     def generate(
         self,
@@ -364,11 +253,96 @@ class GeminiLLMClient(BaseLLMClient):
         Calculate API cost in USD based on token usage.
         Uses model-specific pricing from PRICING constant.
         """
-        pricing = self.PRICING.get(self.model, self.PRICING["gemini-1.5-flash"])
+        pricing = self.PRICING.get(self.model, self.PRICING["gemini-2.0-flash"])
         
         input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
         output_cost = (completion_tokens / 1_000_000) * pricing["output"]
         
+        return input_cost + output_cost
+
+
+class GroqLLMClient(BaseLLMClient):
+    """
+    Groq API client wrapper (OpenAI-compatible).
+    Uses https://api.groq.com/openai/v1/chat/completions. Default model: llama3-8b-8192.
+    """
+    BASE_URL = "https://api.groq.com/openai/v1"
+    PRICING = {
+        "llama3-8b-8192": {"input": 0.05, "output": 0.10},
+        "llama3-70b-8192": {"input": 0.59, "output": 0.79},
+        "mixtral-8x7b-32768": {"input": 0.24, "output": 0.24},
+    }
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "llama3-8b-8192",
+        timeout: int = 3,
+        max_retries: int = 3
+    ):
+        super().__init__(api_key, timeout)
+        self.model = model
+        self.max_retries = max_retries
+
+    def generate(
+        self,
+        prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 150,
+        system_prompt: Optional[str] = None
+    ) -> str:
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        return self.chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 150
+    ) -> str:
+        for attempt in range(self.max_retries):
+            try:
+                with httpx.Client(timeout=float(self.timeout)) as client:
+                    resp = client.post(
+                        f"{self.BASE_URL}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": self.model,
+                            "messages": messages,
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                        },
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                choice = data.get("choices", [{}])[0]
+                msg = choice.get("message", {})
+                content = msg.get("content") or ""
+                usage = data.get("usage", {})
+                pt = usage.get("prompt_tokens", 0)
+                ct = usage.get("completion_tokens", 0)
+                self.total_tokens += pt + ct
+                self.total_cost += self.calculate_cost(pt, ct)
+                return content.strip()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < self.max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise Exception(f"Groq API error: {e}")
+            except Exception as e:
+                raise Exception(f"Groq API error: {e}")
+        raise Exception("Groq generation failed after retries")
+
+    def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        pricing = self.PRICING.get(self.model, self.PRICING["llama3-8b-8192"])
+        input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
+        output_cost = (completion_tokens / 1_000_000) * pricing["output"]
         return input_cost + output_cost
 
 
@@ -477,7 +451,7 @@ class MockLLMClient(BaseLLMClient):
 class LLMClient:
     """
     Factory class for creating LLM client instances.
-    Supports OpenAI, Gemini, and Mock providers.
+    Supports Gemini, Groq, and Mock providers.
     """
     
     @staticmethod
@@ -491,7 +465,7 @@ class LLMClient:
         Create appropriate LLM client based on provider.
         
         Args:
-            provider: Provider name ("openai", "gemini", or "mock")
+            provider: Provider name ("gemini", "groq", or "mock")
             api_key: API key for the provider (not used for mock)
             model: Specific model to use (optional, uses provider default)
             **kwargs: Additional provider-specific arguments (timeout, max_retries, etc.)
@@ -503,37 +477,32 @@ class LLMClient:
             ValueError: If provider is not supported
             
         Example:
-            # OpenAI client
-            llm = LLMClient.create("openai", api_key="sk-...", model="gpt-4-turbo")
-            
             # Gemini client
-            llm = LLMClient.create("gemini", api_key="AI...", model="gemini-1.5-flash")
-            
+            llm = LLMClient.create("gemini", api_key="AI...", model="gemini-2.0-flash")
+            # Groq client (free model: llama3-8b-8192)
+            llm = LLMClient.create("groq", api_key="gsk_...", model="llama3-8b-8192")
             # Mock client for testing
-            llm = LLMClient.create("mock", api_key="not-needed", 
+            llm = LLMClient.create("mock", api_key="not-needed",
                                    predefined_responses={"scam": "This is a scam"})
         """
         provider = provider.lower().strip()
         
-        if provider == "openai":
-            return OpenAILLMClient(
-                api_key=api_key,
-                model=model or "gpt-4-turbo",
-                **kwargs
-            )
-        
-        elif provider == "gemini":
+        if provider == "gemini":
             return GeminiLLMClient(
                 api_key=api_key,
-                model=model or "gemini-1.5-flash",
+                model=model or "gemini-2.0-flash",
                 **kwargs
             )
-        
+        elif provider == "groq":
+            return GroqLLMClient(
+                api_key=api_key,
+                model=model or "llama3-8b-8192",
+                **kwargs
+            )
         elif provider == "mock":
             return MockLLMClient(**kwargs)
-        
         else:
             raise ValueError(
                 f"Unknown provider: '{provider}'. "
-                f"Supported providers: 'openai', 'gemini', 'mock'"
+                f"Supported providers: 'gemini', 'groq', 'mock'"
             )

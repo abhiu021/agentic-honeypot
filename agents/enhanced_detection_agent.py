@@ -24,7 +24,7 @@ class EnhancedDetectionAgent(DetectionAgent):
         """Initialize with optional LLM client.
 
         Args:
-            llm_client: Instance of BaseLLMClient (Gemini/OpenAI/Mock).
+            llm_client: Instance of BaseLLMClient (Gemini/Mock).
                 If None, falls back to pure rule-based detection.
         """
         super().__init__()
@@ -61,6 +61,7 @@ class EnhancedDetectionAgent(DetectionAgent):
                     **llm_result,
                     "confidence": "MEDIUM",
                     "detectionMethod": "LLM_ENHANCED",
+                    "ruleBasedScore": rule_score,
                     "reasoning": llm_result.get("reasoning", ""),
                 }
             except Exception as e:

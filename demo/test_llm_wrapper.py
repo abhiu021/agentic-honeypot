@@ -82,43 +82,26 @@ def test_factory_patterns():
     print("TEST 2: Factory Patterns")
     print("="*60)
     
-    # Test 1: Create OpenAI client (without real API key)
-    print("\n1. Creating OpenAI client:")
-    try:
-        openai_client = LLMClient.create(
-            provider="openai",
-            api_key="test-key-123",
-            model="gpt-4-turbo",
-            timeout=5,
-            max_retries=2
-        )
-        print(f"   ✅ OpenAI client created: {type(openai_client).__name__}")
-        print(f"   Model: {openai_client.model}")
-        print(f"   Timeout: {openai_client.timeout}s")
-        print(f"   Max retries: {openai_client.max_retries}")
-    except Exception as e:
-        print(f"   ❌ Error: {e}")
-    
-    # Test 2: Create Gemini client
-    print("\n2. Creating Gemini client:")
+    # Test 1: Create Gemini client
+    print("\n1. Creating Gemini client:")
     try:
         gemini_client = LLMClient.create(
             provider="gemini",
             api_key="test-key-456",
-            model="gemini-1.5-flash"
+            model="gemini-2.0-flash"
         )
         print(f"   ✅ Gemini client created: {type(gemini_client).__name__}")
         print(f"   Model: {gemini_client.model}")
     except Exception as e:
         print(f"   ❌ Error: {e}")
     
-    # Test 3: Create Mock client
-    print("\n3. Creating Mock client:")
+    # Test 2: Create Mock client
+    print("\n2. Creating Mock client:")
     mock_client = LLMClient.create(provider="mock", api_key="not-needed")
     print(f"   ✅ Mock client created: {type(mock_client).__name__}")
     
-    # Test 4: Unknown provider error
-    print("\n4. Testing unknown provider error handling:")
+    # Test 3: Unknown provider error
+    print("\n3. Testing unknown provider error handling:")
     try:
         LLMClient.create(provider="invalid-provider", api_key="test")
         print("   ❌ Should have raised ValueError")
@@ -134,30 +117,19 @@ def test_cost_calculations():
     print("TEST 3: Cost Calculations")
     print("="*60)
     
-    # OpenAI cost calculation
-    print("\n1. OpenAI GPT-4-turbo cost:")
-    openai_client = LLMClient.create("openai", "test-key", model="gpt-4-turbo")
-    cost = openai_client.calculate_cost(prompt_tokens=1000, completion_tokens=500)
-    print(f"   1,000 prompt tokens + 500 completion tokens")
-    print(f"   Pricing: $10/1M input, $30/1M output")
-    print(f"   Calculated cost: ${cost:.6f}")
-    expected = (1000/1_000_000)*10 + (500/1_000_000)*30
-    print(f"   Expected cost: ${expected:.6f}")
-    print(f"   ✅ Match: {abs(cost - expected) < 0.0001}")
-    
     # Gemini cost calculation
-    print("\n2. Gemini 1.5 Flash cost:")
-    gemini_client = LLMClient.create("gemini", "test-key", model="gemini-1.5-flash")
+    print("\n1. Gemini 2.0 Flash cost:")
+    gemini_client = LLMClient.create("gemini", "test-key", model="gemini-2.0-flash")
     cost = gemini_client.calculate_cost(prompt_tokens=1000, completion_tokens=500)
     print(f"   1,000 prompt tokens + 500 completion tokens")
-    print(f"   Pricing: $0.35/1M input, $1.05/1M output")
+    print(f"   Pricing: $0.15/1M input, $0.60/1M output")
     print(f"   Calculated cost: ${cost:.6f}")
-    expected = (1000/1_000_000)*0.35 + (500/1_000_000)*1.05
+    expected = (1000/1_000_000)*0.15 + (500/1_000_000)*0.60
     print(f"   Expected cost: ${expected:.6f}")
     print(f"   ✅ Match: {abs(cost - expected) < 0.0001}")
     
     # Mock cost (always $0)
-    print("\n3. Mock client cost:")
+    print("\n2. Mock client cost:")
     mock_client = LLMClient.create("mock", "test-key")
     cost = mock_client.calculate_cost(prompt_tokens=10000, completion_tokens=5000)
     print(f"   10,000 prompt tokens + 5,000 completion tokens")
@@ -250,7 +222,7 @@ def main():
         print("\nLLM Client Wrapper is ready for use!")
         print("\nNext steps:")
         print("1. Add real API keys to .env file")
-        print("2. Change LLM_PROVIDER to 'openai' or 'gemini'")
+        print("2. Change LLM_PROVIDER to 'gemini' for real API")
         print("3. Integrate with EnhancedDetectionAgent")
         
     except Exception as e:

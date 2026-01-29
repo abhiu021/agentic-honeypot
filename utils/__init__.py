@@ -6,15 +6,15 @@ Provides LLM client wrappers and helper functions.
 from utils.llm_client import (
     LLMClient,
     BaseLLMClient,
-    OpenAILLMClient,
     GeminiLLMClient,
+    GroqLLMClient,
     MockLLMClient
 )
 
 __all__ = [
     "LLMClient",
-    "BaseLLMClient", 
-    "OpenAILLMClient",
+    "BaseLLMClient",
     "GeminiLLMClient",
+    "GroqLLMClient",
     "MockLLMClient"
 ]

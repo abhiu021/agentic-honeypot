@@ -54,6 +54,8 @@ class TestEnhancedDetectionAgent:
         # LLM should have been called
         assert mock_llm.call_count > 0
         assert result["detectionMethod"] == "LLM_ENHANCED"
+        assert "ruleBasedScore" in result  # Original score preserved
+        assert result["ruleBasedScore"] < result["scamScore"]  # LLM should boost confidence
         assert result["confidence"] == "MEDIUM"
         assert result["scamDetected"] is True
         assert "reasoning" in result
