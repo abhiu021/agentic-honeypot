@@ -20,7 +20,8 @@ class LLMConfig:
         self.gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
         self.gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
         self.groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
-        self.groq_model: str = os.getenv("GROQ_MODEL", "llama3-8b-8192")
+        # Prefer llama-3.1-8b-instant (current); llama3-8b-8192 can return 400 on some accounts
+        self.groq_model: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     
     def get_api_key(self) -> str:
         """Get API key for configured provider."""

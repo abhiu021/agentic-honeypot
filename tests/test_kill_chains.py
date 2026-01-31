@@ -142,11 +142,5 @@ def test_all_kill_chains():
     print(f"\n[OK] All 6 kill-chains instantiated successfully!")
 
 if __name__ == "__main__":
-    test_all_kill_chains()
-    test_upi_fraud_progression()
-    test_account_takeover_progression()
-    test_fake_support_progression()
-    test_phishing_progression()
-    test_investment_scam_progression()
-    test_fake_offer_progression()
-    print("\n[OK] Day 3 Engineer 1 tasks COMPLETE! All 6 kill-chains working!\n")
+    import pytest
+    pytest.main([__file__, "-v", "-s"])

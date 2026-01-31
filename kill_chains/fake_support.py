@@ -1,11 +1,11 @@
 import re
 from typing import Tuple
-from kill_chains.base_kill_chain import BaseKillChain
+from kill_chains.base_kill_chain import BaseKillChain, match_keywords_count
 
 class FakeCustomerSupportKillChain(BaseKillChain):
     """
     4-stage kill-chain for fake customer support scams.
-    Models tech support and service impersonation scams.
+    Phase 1 FIX 2: Removed brand names (jio, airtel, amazon) from Stage 2; stage-order validation.
     """
     
     STAGE_DEFINITIONS = {
@@ -18,8 +18,11 @@ class FakeCustomerSupportKillChain(BaseKillChain):
         2: {
             "name": "Support Impersonation",
             "objective": "Pose as customer care representative",
-            "keywords": ["customer care", "customer support", "helpline",
-                        "airtel", "jio", "amazon", "technical support"]
+            "keywords": [
+                "customer care", "customer support", "helpline",
+                "technical support", "support team", "care executive",
+                "service center", "support representative"
+            ]
         },
         3: {
             "name": "Remote Access Request",
@@ -51,8 +54,17 @@ class FakeCustomerSupportKillChain(BaseKillChain):
         if next_stage > 4:
             return (current_stage, 0.0)
         
-        keywords = self.STAGE_DEFINITIONS[next_stage]["keywords"]
-        matches = sum(1 for kw in keywords if kw in msg)
+        stage_def = self.STAGE_DEFINITIONS[next_stage]
+        keywords = stage_def["keywords"]
+        matches = match_keywords_count(keywords, msg)
+        
+        # Phase 1 FIX 2: When we have conversation context, require Stage 1 keywords in context before allowing 1->2
+        if current_stage == 1 and next_stage == 2 and self.conversation_context and matches >= 1:
+            stage1_keywords = self.STAGE_DEFINITIONS[1]["keywords"]
+            context_text = " ".join(m.get("text", "") for m in self.conversation_context)
+            stage1_present = match_keywords_count(stage1_keywords, context_text) >= 1
+            if not stage1_present:
+                return (1, 0.0)
         
         if matches >= 1:
             confidence = min(0.72 + (matches * 0.10), 0.94)

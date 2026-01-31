@@ -1,6 +1,6 @@
 import re
 from typing import Tuple
-from kill_chains.base_kill_chain import BaseKillChain
+from kill_chains.base_kill_chain import BaseKillChain, match_keywords_count, normalize_numbers
 
 class InvestmentScamKillChain(BaseKillChain):
     """
@@ -58,13 +58,17 @@ class InvestmentScamKillChain(BaseKillChain):
     
     def detect_transition(self, current_stage: int, message: str) -> Tuple[int, float]:
         msg = message.lower()
+        normalized_msg = normalize_numbers(msg)
         next_stage = current_stage + 1
         
         if next_stage > 6:
             return (current_stage, 0.0)
         
-        keywords = self.STAGE_DEFINITIONS[next_stage]["keywords"]
-        matches = sum(1 for kw in keywords if kw in msg)
+        stage_def = self.STAGE_DEFINITIONS[next_stage]
+        keywords = stage_def["keywords"]
+        matches = match_keywords_count(keywords, msg)
+        if matches == 0:
+            matches = sum(1 for kw in keywords if normalize_numbers(kw) in normalized_msg)
         
         if matches >= 1:
             confidence = min(0.68 + (matches * 0.09), 0.91)

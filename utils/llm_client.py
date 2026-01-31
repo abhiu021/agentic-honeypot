@@ -264,11 +264,13 @@ class GeminiLLMClient(BaseLLMClient):
 class GroqLLMClient(BaseLLMClient):
     """
     Groq API client wrapper (OpenAI-compatible).
-    Uses https://api.groq.com/openai/v1/chat/completions. Default model: llama3-8b-8192.
+    Uses https://api.groq.com/openai/v1/chat/completions.
+    Supported models: llama3-8b-8192, llama-3.1-8b-instant, llama3-70b-8192, mixtral-8x7b-32768.
     """
     BASE_URL = "https://api.groq.com/openai/v1"
     PRICING = {
         "llama3-8b-8192": {"input": 0.05, "output": 0.10},
+        "llama-3.1-8b-instant": {"input": 0.05, "output": 0.10},
         "llama3-70b-8192": {"input": 0.59, "output": 0.79},
         "mixtral-8x7b-32768": {"input": 0.24, "output": 0.24},
     }
@@ -281,7 +283,7 @@ class GroqLLMClient(BaseLLMClient):
         max_retries: int = 3
     ):
         super().__init__(api_key, timeout)
-        self.model = model
+        self.model = str(model).strip()
         self.max_retries = max_retries
 
     def generate(
@@ -293,8 +295,8 @@ class GroqLLMClient(BaseLLMClient):
     ) -> str:
         messages: List[Dict[str, str]] = []
         if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "system", "content": str(system_prompt)})
+        messages.append({"role": "user", "content": str(prompt) if prompt else ""})
         return self.chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
 
     def chat_completion(
@@ -303,6 +305,18 @@ class GroqLLMClient(BaseLLMClient):
         temperature: float = 0.7,
         max_tokens: int = 150
     ) -> str:
+        # Groq requires: message content must be string; max_tokens positive int; temperature in valid range
+        payload_messages = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content")
+            if content is None:
+                content = ""
+            payload_messages.append({"role": role, "content": str(content)})
+        temperature_f = float(temperature)
+        temperature_f = max(0.0, min(2.0, temperature_f))
+        max_tokens_int = max(1, int(max_tokens))
+
         for attempt in range(self.max_retries):
             try:
                 with httpx.Client(timeout=float(self.timeout)) as client:
@@ -314,9 +328,9 @@ class GroqLLMClient(BaseLLMClient):
                         },
                         json={
                             "model": self.model,
-                            "messages": messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
+                            "messages": payload_messages,
+                            "temperature": temperature_f,
+                            "max_tokens": max_tokens_int,
                         },
                     )
                 resp.raise_for_status()
@@ -334,7 +348,12 @@ class GroqLLMClient(BaseLLMClient):
                 if e.response.status_code == 429 and attempt < self.max_retries - 1:
                     time.sleep(2 ** attempt)
                     continue
-                raise Exception(f"Groq API error: {e}")
+                try:
+                    body = e.response.json()
+                    err_msg = body.get("error", {}).get("message", body) if isinstance(body, dict) else e.response.text
+                except Exception:
+                    err_msg = e.response.text or str(e)
+                raise Exception(f"Groq API error: {e.response.status_code} - {err_msg}")
             except Exception as e:
                 raise Exception(f"Groq API error: {e}")
         raise Exception("Groq generation failed after retries")

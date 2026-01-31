@@ -1,12 +1,17 @@
 import re
 from typing import Tuple
-from kill_chains.base_kill_chain import BaseKillChain
+from kill_chains.base_kill_chain import BaseKillChain, match_keywords_count
 
 class UPIFraudKillChain(BaseKillChain):
     """
     6-stage kill-chain for UPI fraud scams.
-    Models complete UPI fraud workflow from urgency creation to fund extraction.
+    Phase 1 FIX 4: Anti-keywords to block false positives (legit cashback, OTP sent to user).
     """
+    
+    ANTI_KEYWORDS = {
+        3: ["cashback", "credited", "successful", "completed", "received", "official app"],
+        5: ["received otp", "your otp is", "otp for"],
+    }
     
     STAGE_DEFINITIONS = {
         1: {
@@ -58,36 +63,26 @@ class UPIFraudKillChain(BaseKillChain):
         return self.STAGE_DEFINITIONS[stage]["objective"]
     
     def detect_transition(self, current_stage: int, message: str) -> Tuple[int, float]:
-        """
-        Detect stage transitions based on keywords and patterns.
-        """
         msg = message.lower()
         next_stage = current_stage + 1
         
         if next_stage > 6:
             return (current_stage, 0.0)
         
+        # Phase 1 FIX 4: Block false positives with anti-keywords
+        if next_stage in self.ANTI_KEYWORDS:
+            if any(anti in msg for anti in self.ANTI_KEYWORDS[next_stage]):
+                return (current_stage, 0.0)
+        
         stage_def = self.STAGE_DEFINITIONS[next_stage]
-        
-        # Check keywords
-        keyword_matches = 0
-        if "keywords" in stage_def:
-            for kw in stage_def["keywords"]:
-                if kw in msg:
-                    keyword_matches += 1
-        
-        # Check regex patterns
-        pattern_matches = 0
+        matches = 0
         if "patterns" in stage_def:
-            for pattern in stage_def["patterns"]:
-                if re.search(pattern, msg):
-                    pattern_matches += 1
+            matches += sum(1 for p in stage_def["patterns"] if re.search(p, msg, re.IGNORECASE))
+        if "keywords" in stage_def:
+            matches += match_keywords_count(stage_def["keywords"], msg)
         
-        total_matches = keyword_matches + pattern_matches
-        
-        # Transition if at least 1 match
-        if total_matches >= 1:
-            confidence = min(0.70 + (total_matches * 0.10), 0.95)
+        if matches >= 1:
+            confidence = min(0.70 + (matches * 0.10), 0.95)
             return (next_stage, confidence)
         
         return (current_stage, 0.0)

@@ -1,12 +1,20 @@
 import re
 from typing import Tuple
-from kill_chains.base_kill_chain import BaseKillChain
+from kill_chains.base_kill_chain import BaseKillChain, match_keywords_count
 
 class FakeOfferKillChain(BaseKillChain):
     """
     3-stage kill-chain for fake offer scams.
-    Models lottery, prize, and cashback fraud.
+    Phase 1 FIX 4: Anti-keywords for Stage 1 to block legit marketing.
     """
+    
+    ANTI_KEYWORDS = {
+        1: [
+            "credited", "earned", "received", "paid",
+            "on orders", "on purchase", "minimum order",
+            "reward points", "loyalty", "cashback earned",
+        ]
+    }
     
     STAGE_DEFINITIONS = {
         1: {
@@ -45,8 +53,12 @@ class FakeOfferKillChain(BaseKillChain):
         if next_stage > 3:
             return (current_stage, 0.0)
         
-        keywords = self.STAGE_DEFINITIONS[next_stage]["keywords"]
-        matches = sum(1 for kw in keywords if kw in msg)
+        if next_stage in self.ANTI_KEYWORDS:
+            if any(anti in msg for anti in self.ANTI_KEYWORDS[next_stage]):
+                return (current_stage, 0.0)
+        
+        stage_def = self.STAGE_DEFINITIONS[next_stage]
+        matches = match_keywords_count(stage_def["keywords"], msg)
         
         if matches >= 1:
             confidence = min(0.74 + (matches * 0.10), 0.93)

@@ -1,6 +1,6 @@
 import re
 from typing import Tuple
-from kill_chains.base_kill_chain import BaseKillChain
+from kill_chains.base_kill_chain import BaseKillChain, match_keywords_count
 
 class PhishingKillChain(BaseKillChain):
     """
@@ -47,14 +47,10 @@ class PhishingKillChain(BaseKillChain):
         
         stage_def = self.STAGE_DEFINITIONS[next_stage]
         matches = 0
-        
-        # Keywords
-        if "keywords" in stage_def:
-            matches += sum(1 for kw in stage_def["keywords"] if kw in msg)
-        
-        # URL patterns
         if "patterns" in stage_def:
-            matches += sum(1 for p in stage_def["patterns"] if re.search(p, msg))
+            matches += sum(1 for p in stage_def["patterns"] if re.search(p, msg, re.IGNORECASE))
+        if "keywords" in stage_def:
+            matches += match_keywords_count(stage_def["keywords"], msg)
         
         if matches >= 1:
             confidence = min(0.75 + (matches * 0.10), 0.92)

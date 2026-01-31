@@ -1,11 +1,15 @@
 import re
 from typing import Tuple
-from kill_chains.base_kill_chain import BaseKillChain
+from kill_chains.base_kill_chain import (
+    BaseKillChain,
+    match_keywords_count,
+)
 
 class AccountTakeoverKillChain(BaseKillChain):
     """
     6-stage kill-chain for account takeover scams.
     Models complete account compromise workflow.
+    Phase 1 FIX 1: Stage 6 uses patterns for flexible phrase matching.
     """
     
     STAGE_DEFINITIONS = {
@@ -43,8 +47,16 @@ class AccountTakeoverKillChain(BaseKillChain):
         6: {
             "name": "Account Compromise Complete",
             "objective": "Successfully taken over account",
-            "keywords": ["account secure", "restored", "new password",
-                        "check your email"]
+            "patterns": [
+                r'\baccount\s+secure\b',
+                r'\baccount\s+is\s+(?:now\s+)?secure\b',
+                r'\baccount\s+has\s+been\s+secured\b',
+                r'\brestored\b',
+                r'\bnew\s+password\b',
+                r'\bpassword\s+reset\b',
+                r'\baccount\s+access\s+restored\b',
+                r'\bcheck\s+your\s+email\b',
+            ]
         }
     }
     
@@ -66,14 +78,10 @@ class AccountTakeoverKillChain(BaseKillChain):
         
         stage_def = self.STAGE_DEFINITIONS[next_stage]
         matches = 0
-        
-        # Keyword matching
-        if "keywords" in stage_def:
-            matches += sum(1 for kw in stage_def["keywords"] if kw in msg)
-        
-        # Pattern matching
         if "patterns" in stage_def:
-            matches += sum(1 for p in stage_def["patterns"] if re.search(p, msg))
+            matches += sum(1 for p in stage_def["patterns"] if re.search(p, msg, re.IGNORECASE))
+        if "keywords" in stage_def:
+            matches += match_keywords_count(stage_def["keywords"], msg)
         
         if matches >= 1:
             confidence = min(0.70 + (matches * 0.08), 0.93)
