@@ -1,11 +1,35 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from api.schemas import HoneypotRequest, HoneypotResponse, ErrorResponse, EngagementMetrics, AgentResponse, ExtractedIntelligence
 from api.middleware import verify_api_key
+from agents import initialize_agent_pipeline
+from orchestration import process_message
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Lazy LLM client for orchestration (optional)
+_llm_client = None
+
+def _get_llm_client():
+    global _llm_client
+    if _llm_client is not None:
+        return _llm_client
+    try:
+        from config import LLMConfig
+        from utils.llm_client import LLMClient
+        cfg = LLMConfig()
+        _llm_client = LLMClient.create(
+            cfg.provider,
+            api_key=cfg.get_api_key(),
+            model=cfg.get_model(),
+            timeout=cfg.timeout,
+        )
+        return _llm_client
+    except Exception as e:
+        logger.warning("LLM client not available: %s. Engagement will use fallbacks.", e)
+        return None
 
 def validate_request(request: HoneypotRequest):
     """
@@ -61,40 +85,14 @@ async def honeypot_endpoint(
     **GUVI Spec Compliant**: Accepts and returns exact schemas required by buildathon evaluation.
     """
     try:
-        # Validate request structure
         validate_request(request)
-        
-        logger.info(f"Processing message for session: {request.sessionId}")
-        
-        # TODO: Day 2-5 - Implement full agent orchestration here
-        # For now, return mock response to test API structure
-        
-        return HoneypotResponse(
-            status="success",
-            scamDetected=True,
-            scamConfidenceScore=0.85,
-            engagementMetrics=EngagementMetrics(
-                engagementDurationSeconds=120,
-                totalMessagesExchanged=3,
-                userEngagementPhase="CREDIBILITY_ESTABLISHMENT",
-                intelligenceValueRemaining=0.75,
-                recommendedNextAction="CONTINUE_ENGAGEMENT"
-            ),
-            extractedIntelligence=ExtractedIntelligence(),
-            agentResponse=AgentResponse(
-                message="I'm concerned about this. Can you provide more details?",
-                responseGeneratedBy="ENGAGEMENT_AGENT",
-                personaUsed="AVERAGE_USER",
-                intentionBehindResponse="Build trust while seeking verification"
-            ),
-            agentNotes="Scam detected with high confidence. Continuing engagement to extract intelligence."
-        )
-        
+        logger.info("Processing message for session: %s", request.sessionId)
+        llm_client = _get_llm_client()
+        agents = initialize_agent_pipeline(llm_client=llm_client)
+        response = process_message(request, agents)
+        return response
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error processing request: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
+        logger.error("Orchestration failed: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error: %s" % str(e))

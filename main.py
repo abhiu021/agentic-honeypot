@@ -34,7 +34,7 @@ app.add_middleware(
 # Add request logging middleware
 app.middleware("http")(log_requests)
 
-# Include API routes
+# Include API routes (orchestrator: Detection → Strategic → Engagement → STEP 5 Ethics Gate in api/routes.py)
 app.include_router(router)
 
 # Global exception handlers

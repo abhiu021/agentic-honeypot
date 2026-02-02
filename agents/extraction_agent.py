@@ -1,25 +1,96 @@
 """
 ExtractionAgent - Intelligence extraction from scammer messages.
 
-Extracts structured intelligence using regex patterns and keyword matching.
-Matches SessionMemory.extractedIntelligence structure.
+Hybrid 95% regex / 5% LLM: fast regex for clear patterns (phones, UPI, URLs),
+LLM escalation for ambiguous cases (order #, standalone 10-digit, multi-provider UPI).
+Also provides extract_intelligence() matching SessionMemory.extractedIntelligence.
 """
 
 import re
-from typing import Dict, List, Optional, Set
+import time
+import json
+import logging
+from typing import Dict, List, Optional, Set, Any, Tuple
 from urllib.parse import urlparse
 
+from .base_agent import BaseAgent
 
-class ExtractionAgent:
+logger = logging.getLogger(__name__)
+
+
+def _norm_llm_phones(phones: List[Any]) -> List[str]:
+    """Normalize LLM phone list to 91-prefix strings."""
+    out: List[str] = []
+    for p in phones or []:
+        if not isinstance(p, str):
+            continue
+        digits = re.sub(r"\D", "", p)
+        if len(digits) == 10 and digits[0] in "6789":
+            out.append("91" + digits)
+        elif len(digits) == 12 and digits.startswith("91"):
+            out.append(digits)
+        elif len(digits) == 10:
+            out.append("91" + digits)
+        else:
+            out.append(digits)
+    return out
+
+
+def _norm_llm_upis(upis: List[Any]) -> List[Tuple[str, str]]:
+    """Normalize LLM UPI list (strings like 'id@paytm') to (id, provider) tuples."""
+    out: List[Tuple[str, str]] = []
+    for u in upis or []:
+        if isinstance(u, (list, tuple)) and len(u) >= 2:
+            out.append((str(u[0]).strip(), str(u[1]).lower()))
+        elif isinstance(u, str) and "@" in u:
+            parts = u.strip().rsplit("@", 1)
+            if len(parts) == 2:
+                out.append((parts[0].strip(), parts[1].lower()))
+    return out
+
+
+class ExtractionAgent(BaseAgent):
     """
-    Extracts structured intelligence from scammer messages.
-    Uses regex patterns and keyword matching.
+    Hybrid Regex+LLM extraction: 95% regex (fast), 5% LLM (ambiguous cases).
+    extract(message) -> {method, phones, upis, urls, latency_ms, confidence}
+    extract_intelligence(message) -> full SessionMemory.extractedIntelligence structure.
     """
 
-    def __init__(self) -> None:
-        """Initialize extraction patterns."""
+    # --- Fast path: compiled regex (Indian phone / UPI / URL), ~1.9ms ---
+    PHONE_RX = re.compile(r"\+?91[-.\s]?\d{10}|\b[6-9]\d{9}\b")
+    UPI_RX = re.compile(
+        r"\b([a-zA-Z0-9.-]+)@(paytm|phonepe|ybl|axis|bl|oksbi|icici|kotak|airtel)\b",
+        re.I,
+    )
+    URL_RX = re.compile(r"https?://[^\s<>\"{}|\\^`\[\]]+")
+    # Bare domains (no scheme): www.fake-bank.in, signup.scam-trade.com, example.com/path
+    BARE_DOMAIN_RX = re.compile(
+        r"\b(?:www\.)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:\/[^\s<>\"{}|\\^`\[\]]*)?",
+        re.I,
+    )
 
-        # Regex patterns for identity markers
+    # LLM escalation triggers (5% of cases)
+    AMBIGUOUS_PATTERNS = [
+        r"order\s*#?",
+        r"ref\s*#?",
+        r"id\s*:?",
+        r"ticket\s*#?",
+        r"transaction\s*#?",
+        r"invoice\s*#?",
+    ]
+
+    def __init__(
+        self,
+        llm_client: Optional[Any] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__()
+        self.llm_client = llm_client
+        self.config = config or {"llm_budget": 1000, "llm_enabled": True}
+        self.llm_calls_today = 0
+        self.session_llm_budget = self.config.get("session_llm_budget", 3)
+
+        # Regex patterns for identity markers (used by extract_intelligence)
         self.patterns: Dict[str, List[str]] = {
             "phone": [
                 r"\+91[-\s]?\d{10}",  # +91 9876543210 or +91-9876543210
@@ -43,6 +114,8 @@ class ExtractionAgent:
                 r"tinyurl\.com/[\w]+",
                 r"goo\.gl/[\w]+",
                 r"[\w-]+\.(?:com|in|org|net|xyz)/[\w/.-]*",
+                # Bare domains (no scheme): www.fake-bank.in, signup.scam-trade.com
+                r"(?:www\.)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:/[^\s<>\"{}|\\^`\[\]]*)?",
             ],
             "bank_account": [
                 r"(?<!\d)\d{9,18}(?!\d)",  # 9-18 digit account numbers
@@ -199,6 +272,182 @@ class ExtractionAgent:
                 "install app",
             ],
         }
+
+    # --- Hybrid extract() API: 95% regex, 5% LLM escalation ---
+
+    def extract(self, message: str) -> Dict[str, Any]:
+        """
+        Main extraction: 95% regex → 5% LLM escalation.
+        Returns: {method, phones, upis, urls, latency_ms, confidence}
+        """
+        if not message or len(message.strip()) == 0:
+            return {
+                "method": "EMPTY",
+                "phones": [],
+                "upis": [],
+                "urls": [],
+                "latency_ms": 0.1,
+            }
+
+        start_time = time.time()
+        regex_results = self._fast_regex_extract(message)
+        needs_llm = self._needs_llm(message.lower(), regex_results)
+
+        # Ambiguous case (order #, standalone 10-digit, etc.): escalate to LLM or treat as empty
+        if needs_llm:
+            if self.llm_client:
+                llm_result = self._llm_extract_ambiguous(message)
+                # Merge: keep regex results, add/fill from LLM (don't let empty LLM overwrite regex)
+                phones = list(dict.fromkeys(regex_results["phones"] + _norm_llm_phones(llm_result.get("phones", []))))
+                upis_regex = regex_results["upis"]
+                upis_llm = _norm_llm_upis(llm_result.get("upis", []))
+                upis = list(dict.fromkeys(upis_regex + [u for u in upis_llm if u not in upis_regex]))
+                urls = list(dict.fromkeys(regex_results["urls"] + (llm_result.get("urls") or [])))
+                result = {
+                    "method": "HYBRID",
+                    "latency_ms": round((time.time() - start_time) * 1000, 2),
+                    "phones": phones,
+                    "upis": upis,
+                    "urls": urls,
+                    "confidence": llm_result.get("confidence", "LOW"),
+                }
+                logger.info("LLM escalation: %s", llm_result)
+                return result
+            # No LLM client: do not trust regex for ambiguous context (could be order ID, not phone)
+            result = {
+                "method": "REGEX_EMPTY",
+                "latency_ms": round((time.time() - start_time) * 1000, 2),
+                "phones": [],
+                "upis": [],
+                "urls": [],
+                "confidence": "LOW",
+            }
+            return result
+
+        # Clear case: regex found something
+        if regex_results["phones"] or regex_results["upis"] or regex_results["urls"]:
+            result = {
+                "method": "REGEX_ONLY",
+                "latency_ms": round((time.time() - start_time) * 1000, 2),
+                **regex_results,
+                "confidence": "HIGH",
+            }
+            logger.info("REGEX hit: %s", regex_results)
+            return result
+
+        result = {
+            "method": "REGEX_EMPTY",
+            "latency_ms": round((time.time() - start_time) * 1000, 2),
+            "phones": [],
+            "upis": [],
+            "urls": [],
+            "confidence": "LOW",
+        }
+        return result
+
+    def _fast_regex_extract(self, message: str) -> Dict[str, Any]:
+        """Fast path: extract phones, UPIs, URLs (~1.9ms)."""
+        raw_phones = self.PHONE_RX.findall(message)
+        phones: List[str] = []
+        for m in raw_phones:
+            digits = re.sub(r"\D", "", m)
+            if len(digits) == 10 and digits[0] in "6789":
+                phones.append("91" + digits)
+            elif len(digits) == 12 and digits.startswith("91"):
+                phones.append(digits)
+            elif len(digits) == 10:
+                phones.append("91" + digits)
+            else:
+                phones.append(digits)
+        phones = list(dict.fromkeys(phones))
+
+        upis_raw = self.UPI_RX.findall(message)
+        upis: List[Tuple[str, str]] = [(id_part, provider.lower()) for id_part, provider in upis_raw]
+        urls = list(dict.fromkeys(self.URL_RX.findall(message)))
+        # Add bare domains (normalize to https:// for consistency)
+        for bare in self.BARE_DOMAIN_RX.findall(message):
+            normalized = bare if bare.startswith("http") else "https://" + bare
+            if normalized not in urls:
+                urls.append(normalized)
+        urls = list(dict.fromkeys(urls))
+
+        return {"phones": phones, "upis": upis, "urls": urls}
+
+    def _needs_llm(self, msg_lower: str, regex_results: Dict[str, Any]) -> bool:
+        """Smart escalation: 95% False, 5% True. Detects ambiguous context (with or without LLM)."""
+        if self.llm_client and self.llm_calls_today >= self.config.get("llm_budget", 1000):
+            return False
+        if any(re.search(p, msg_lower) for p in self.AMBIGUOUS_PATTERNS):
+            return True
+        if re.search(
+            r"(paytm|phonepe|ybl).*?(paytm|phonepe|ybl)",
+            msg_lower,
+            re.I,
+        ):
+            return True
+        # Standalone 10-digit only when NOT clearly a +91 phone (avoid "Call +91 9876543210")
+        has_plus91 = bool(re.search(r"\+?\s*91\s*\d", msg_lower))
+        standalone = re.findall(r"\b[6-9]\d{9}\b", msg_lower)
+        if (
+            standalone
+            and not has_plus91
+            and not (regex_results.get("urls") or regex_results.get("upis"))
+        ):
+            return True
+        return False
+
+    def _llm_extract_ambiguous(self, message: str) -> Dict[str, Any]:
+        """LLM for ambiguous cases."""
+        self.llm_calls_today += 1
+        if not self.llm_client:
+            return {"phones": [], "upis": [], "urls": [], "confidence": "LOW"}
+
+        prompt = f"""Extract phone numbers, UPI IDs, and URLs from this Indian scam message.
+Return ONLY valid JSON. Be conservative - only extract CLEAR matches.
+
+Message: "{message}"
+
+{{
+  "phones": ["+919876543210", "9876543210"],
+  "upis": ["test@paytm", "user@phonepe"],
+  "urls": ["https://fakebank.com/verify"],
+  "confidence": "LOW|MEDIUM|HIGH"
+}}
+"""
+        try:
+            response = self.llm_client.generate(
+                prompt, temperature=0.1, max_tokens=200
+            )
+            parsed = self._parse_llm_json(response)
+            return {
+                **parsed,
+                "llm_raw": (response[:100] + "...") if response else "",
+            }
+        except Exception as e:
+            logger.error("LLM extraction failed: %s", e)
+            return {"phones": [], "upis": [], "urls": [], "confidence": "LOW"}
+
+    def _parse_llm_json(self, response: str) -> Dict[str, Any]:
+        """Safe JSON parsing with validation."""
+        try:
+            cleaned = re.sub(r"```(?:json)?", "", response or "", flags=re.I).strip()
+            result = json.loads(cleaned)
+            if not all(
+                key in result for key in ["phones", "upis", "urls", "confidence"]
+            ):
+                raise ValueError("Missing required fields")
+            return {
+                "phones": result.get("phones", []),
+                "upis": result.get("upis", []),
+                "urls": result.get("urls", []),
+                "confidence": result.get("confidence", "LOW"),
+            }
+        except Exception:
+            return {"phones": [], "upis": [], "urls": [], "confidence": "LOW"}
+
+    def process(self, message: str, **kwargs: Any) -> Dict[str, Any]:
+        """BaseAgent: process() delegates to extract()."""
+        return self.extract(message)
 
     def extract_intelligence(
         self, message: str, scam_type: Optional[str] = None

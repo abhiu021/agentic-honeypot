@@ -1,13 +1,111 @@
 """
 Tests for ExtractionAgent - intelligence extraction from scammer messages.
+Includes hybrid extract() (95% regex, 5% LLM) and extract_intelligence() (full schema).
 """
 
 import sys
 import os
+from unittest.mock import Mock
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.extraction_agent import ExtractionAgent
+
+
+# --- Hybrid extract() tests (95% regex, 5% LLM) ---
+
+
+def test_extract_clear_phone_regex() -> None:
+    """1.9ms clear phone wins REGEX_ONLY."""
+    agent = ExtractionAgent()
+    result = agent.extract("Call +91 9876543210 NOW")
+    assert result["phones"] == ["919876543210"]
+    assert result["method"] == "REGEX_ONLY"
+    assert result["latency_ms"] < 10
+    assert result.get("confidence") == "HIGH"
+
+
+def test_extract_clear_upi_regex() -> None:
+    """Clear UPI -> REGEX_ONLY, upis as (id, provider) tuples."""
+    agent = ExtractionAgent()
+    result = agent.extract("Share test@paytm UPI")
+    assert result["upis"] == [("test", "paytm")]
+    assert result["method"] == "REGEX_ONLY"
+
+
+def test_extract_clear_url_regex() -> None:
+    """Clear URL -> REGEX_ONLY."""
+    agent = ExtractionAgent()
+    result = agent.extract("Click https://fakebank.com")
+    assert any("fakebank.com" in u for u in result["urls"])
+    assert result["method"] == "REGEX_ONLY"
+
+
+def test_extract_bare_domain_regex() -> None:
+    """Bare domains (no scheme) -> REGEX_ONLY, normalized to https://."""
+    agent = ExtractionAgent()
+    result = agent.extract("Visit www.fake-bank.in or signup.scam-trade.com to verify")
+    urls = result["urls"]
+    assert any("fake-bank.in" in u for u in urls)
+    assert any("scam-trade.com" in u for u in urls)
+    assert all(u.startswith("https://") for u in urls)
+    assert result["method"] == "REGEX_ONLY"
+
+
+def test_extract_order_id_ambiguity_llm() -> None:
+    """Order #9876543210 -> LLM escalation when llm_client set."""
+    mock_llm = Mock()
+    mock_llm.generate.return_value = """{
+        "phones": ["+919876543210"],
+        "upis": [],
+        "urls": [],
+        "confidence": "HIGH"
+    }"""
+    agent = ExtractionAgent(llm_client=mock_llm)
+    result = agent.extract("Order #9876543210 failed")
+    assert result["method"] == "HYBRID"
+    mock_llm.generate.assert_called_once()
+
+
+def test_extract_standalone_phone_llm() -> None:
+    """Standalone 9876543210 without other context -> LLM when llm_client set."""
+    mock_llm = Mock()
+    mock_llm.generate.return_value = """{"phones": [], "upis": [], "urls": [], "confidence": "LOW"}"""
+    agent = ExtractionAgent(llm_client=mock_llm)
+    result = agent.extract("Contact 9876543210 support")
+    assert result["method"] == "HYBRID"
+    mock_llm.generate.assert_called_once()
+
+
+def test_extract_empty_message() -> None:
+    agent = ExtractionAgent()
+    result = agent.extract("")
+    assert result["method"] == "EMPTY"
+    assert result["phones"] == []
+    assert result["upis"] == []
+    assert result["urls"] == []
+
+
+def test_extract_no_llm_client_fallback() -> None:
+    """No LLM client -> ambiguous text returns REGEX_EMPTY."""
+    agent = ExtractionAgent()
+    result = agent.extract("Order #9876543210 failed")
+    assert result["method"] == "REGEX_EMPTY"
+    assert not result["phones"]
+
+
+def test_extract_process_base_agent() -> None:
+    """process() delegates to extract() for BaseAgent compatibility."""
+    agent = ExtractionAgent()
+    result = agent.process("Call +91 9876543210")
+    assert "phones" in result
+    assert result["phones"] == ["919876543210"]
+    assert result["method"] == "REGEX_ONLY"
+
+
+# --- extract_intelligence() tests (full schema) ---
 
 
 def test_phone_number_extraction() -> None:

@@ -39,7 +39,7 @@ class DetectionAgent(BaseAgent):
     INFO_REQUEST_KEYWORDS = [
         "share", "provide", "enter", "confirm", "verify",
         "send", "otp", "password", "pin",
-        "account number", "upi id", "mpin", "user id", "details"
+        "account number", "upi id", "upi", "mpin", "user id", "details"
     ]
 
     INCENTIVE_KEYWORDS = [
@@ -142,14 +142,18 @@ class DetectionAgent(BaseAgent):
     def _calculate_threat_score(self, message: str) -> float:
         """Calculate threat score based on threat keywords in message."""
         matches = sum(1 for keyword in self.THREAT_KEYWORDS if keyword in message)
-        # Normalize to 0-1 range (cap at 1.0)
-        return min(1.0, matches / len(self.THREAT_KEYWORDS) * 3.0)
+        if matches == 0:
+            return 0.0
+        # Strong signal: even 1 match (e.g. "blocked") is strong indicator
+        return min(1.0, 0.5 + matches * 0.25)
 
     def _calculate_info_request_score(self, message: str) -> float:
         """Calculate information request score based on info request keywords."""
         matches = sum(1 for keyword in self.INFO_REQUEST_KEYWORDS if keyword in message)
-        # Normalize to 0-1 range (cap at 1.0)
-        return min(1.0, matches / len(self.INFO_REQUEST_KEYWORDS) * 3.0)
+        if matches == 0:
+            return 0.0
+        # Strong signal: "share" / "upi" etc. are strong indicators
+        return min(1.0, 0.5 + matches * 0.25)
 
     def _calculate_incentive_score(self, message: str) -> float:
         """Score based on financial incentive keywords."""
